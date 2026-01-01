@@ -1,0 +1,46 @@
+name: Predict 15m Timeframe
+
+on:
+  schedule:
+    - cron: '*/15 * * * *'  # 每15分鐘執行一次
+  workflow_dispatch:  # 手動觸發
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install -q pandas scikit-learn pyarrow requests huggingface-hub
+      
+      - name: Run predictions (15m)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TIMEFRAME: "15m"
+        run: |
+          python colab_scripts/generate_predictions.py
+      
+      - name: Commit and push
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add predictions/ 2>/dev/null || true
+          git commit -m "Auto-predict 15m - $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
+          git push
+      
+      - name: Upload to HuggingFace
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          # 上傳到 HF
+          echo "Uploading to HuggingFace..."
+          # 具體實現見 generate_predictions.py
