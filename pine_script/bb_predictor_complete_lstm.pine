@@ -1,0 +1,188 @@
+//@version=5
+indicator("AI BB Predictor + Entry Signals (LSTM)", shorttitle="AI BB + Entry (LSTM)", overlay=true)
+
+// ============================================================================
+// AI Bollinger Band预测指标
+// 功能:
+// 1. 显示实际BB通道 (蓝色实线)
+// 2. 昺示AI预测的BB通道 (绿色虚线)
+// 3. 基于预测进场信号 (三角标记)
+// 4. 昺示预测精度
+// ============================================================================
+
+// ============================================================================
+// 输入參数设置
+// ============================================================================
+
+// BB參数
+bb_len = input.int(20, "BB Period", minval=5, maxval=100, group="BB Settings")
+bb_std = input.float(2.0, "BB Std Dev", minval=0.5, maxval=4.0, step=0.1, group="BB Settings")
+
+// MACD參数（用于動能确认）
+macd_f = input.int(12, "MACD Fast", group="Momentum")
+macd_s = input.int(26, "MACD Slow", group="Momentum")
+macd_sig = input.int(9, "MACD Signal", group="Momentum")
+
+// 进场设置
+entry_tolerance = input.float(2.0, "Entry Tolerance %", minval=0.1, maxval=5.0, step=0.1, group="Entry Settings")
+require_momentum = input.bool(true, "Require Momentum Confirmation", group="Entry Settings")
+
+// 昺示设置
+show_actual_bb = input.bool(true, "Show Actual BB", group="Display")
+show_ai_prediction = input.bool(true, "Show AI Predictions", group="Display")
+show_entry_signals = input.bool(true, "Show Entry Signals", group="Display")
+show_accuracy = input.bool(true, "Show Prediction Accuracy", group="Display")
+
+ai_line_width = input.int(2, "AI Line Width", minval=1, maxval=5, group="Display")
+
+// ============================================================================
+// 第1步: 计算实际的Bollinger Bands
+// ============================================================================
+
+[bb_middle, bb_upper, bb_lower] = ta.bb(close, bb_len, bb_std)
+
+// ============================================================================
+// 第2步: 从GitHub加载AI预测的BB通道
+// ============================================================================
+// 使用request.seed()从GitHub读取预测数据
+//
+// 性止 "YOUR_USERNAME" 为你的GitHub用户名
+// 性止 "BTCUSDT_15m" 为你的币种_时间框架
+//
+// 文件路径结构:
+// https://github.com/YOUR_USERNAME/bb-channel-ai-predictor
+// 包含 predictions/ 文件夹中CSV文件
+
+predicted_bb_upper = request.seed("YOUR_USERNAME/bb-channel-ai-predictor", "BTCUSDT_15m_predictions", high)
+predicted_bb_lower = request.seed("YOUR_USERNAME/bb-channel-ai-predictor", "BTCUSDT_15m_predictions", low)
+predicted_bb_middle = request.seed("YOUR_USERNAME/bb-channel-ai-predictor", "BTCUSDT_15m_predictions", close)
+
+// ============================================================================
+// 第3步: 计算MACD用于動能确认
+// ============================================================================
+
+[macd_line, signal_line, histogram] = ta.macd(close, macd_f, macd_s, macd_sig)
+
+momentum_bullish = histogram > 0 and histogram > histogram[1]
+momentum_bearish = histogram < 0 and histogram < histogram[1]
+
+// ============================================================================
+// 第4步: 可視化 - 续画实际BB通道 (蓝色)
+// ============================================================================
+
+if show_actual_bb
+    plot(bb_upper, "Actual BB Upper", color=color.new(color.blue, 0), linewidth=1)
+    plot(bb_lower, "Actual BB Lower", color=color.new(color.blue, 0), linewidth=1)
+    plot(bb_middle, "Actual BB Middle", color=color.new(color.blue, 50), linewidth=1)
+
+// ============================================================================
+// 第5步: 可視化 - 续画AI预测BB通道 (绿色虚线)
+// ============================================================================
+// 绿色虚线表示AI模型预测的未来BB位置
+
+if show_ai_prediction
+    plot(predicted_bb_upper, "Predicted BB Upper", color=color.new(color.green, 0), 
+         linewidth=ai_line_width, style=plot.style_dashed)
+    plot(predicted_bb_lower, "Predicted BB Lower", color=color.new(color.green, 0), 
+         linewidth=ai_line_width, style=plot.style_dashed)
+    plot(predicted_bb_middle, "Predicted BB Middle", color=color.new(color.green, 50), 
+         linewidth=1, style=plot.style_dashed)
+
+// ============================================================================
+// 第6步: 计算进场条件
+// ============================================================================
+
+// 做多条件:
+// 1. 价格接近预测的下轨
+// 2. (可选) 動能上升确认
+
+price_near_predicted_lower = close <= predicted_bb_lower * (1 + entry_tolerance / 100)
+price_above_predicted_lower = close > predicted_bb_lower
+
+if require_momentum
+    long_signal = price_near_predicted_lower and price_above_predicted_lower and momentum_bullish
+else
+    long_signal = price_near_predicted_lower and price_above_predicted_lower
+
+// 做空条件:
+// 1. 价格接近预测的上轨
+// 2. (可选) 動能下降确认
+
+price_near_predicted_upper = close >= predicted_bb_upper * (1 - entry_tolerance / 100)
+price_below_predicted_upper = close < predicted_bb_upper
+
+if require_momentum
+    short_signal = price_near_predicted_upper and price_below_predicted_upper and momentum_bearish
+else
+    short_signal = price_near_predicted_upper and price_below_predicted_upper
+
+// ============================================================================
+// 第7步: 续画进场信号 (三角标记)
+// ============================================================================
+
+if show_entry_signals
+    plotshape(long_signal, "AI Buy Signal", shape.triangleup, location.belowbar,
+             color=color.new(color.green, 0), size=size.large)
+    plotshape(short_signal, "AI Sell Signal", shape.triangledown, location.abovebar,
+             color=color.new(color.red, 0), size=size.large)
+
+// ============================================================================
+// 第8步: 计算并昺示预测精度
+// ============================================================================
+
+if show_accuracy and barstate.islast
+    if not na(predicted_bb_upper) and not na(predicted_bb_lower) and not na(bb_upper) and not na(bb_lower)
+        // 计算预测BB范围
+        predicted_range = predicted_bb_upper - predicted_bb_lower
+        
+        // 计算实际BB范围
+        actual_range = bb_upper - bb_lower
+        
+        // 计算精度 (0-100%)
+        if actual_range > 0
+            accuracy = (1 - math.abs(predicted_range - actual_range) / actual_range) * 100
+            accuracy = math.max(0, math.min(100, accuracy))  // 限制在0-100之间
+            accuracy_text = str.tostring(accuracy, "0.0") + "%"
+        else
+            accuracy_text = "N/A"
+        
+        // 昺示精度标签
+        label.new(bar_index, high * 1.01,
+                 "Accuracy: " + accuracy_text,
+                 yloc=yloc.abovebar,
+                 color=color.new(color.green, 50),
+                 textcolor=color.white,
+                 style=label.style_label_down,
+                 text_size=size.small)
+
+// ============================================================================
+// 第9步: Webhook警报 - 用于自动交易
+// ============================================================================
+// 这些警报会被发送到你的Webhook URL
+// 可以连接到交易机器人进行自动下单
+
+// 买入信号警报
+alertcondition(long_signal,
+              title="AI BB Buy Signal (LSTM)",
+              message=json.stringify(dict.new(
+                  "signal", "BUY",
+                  "symbol", syminfo.tickerid,
+                  "price", str.tostring(close, "#.##"),
+                  "predicted_lower", str.tostring(predicted_bb_lower, "#.##"),
+                  "actual_lower", str.tostring(bb_lower, "#.##"),
+                  "momentum", str.tostring(histogram, "#.###"),
+                  "time", str.tostring(timenow)
+              )))
+
+// 卖出信号警报
+alertcondition(short_signal,
+              title="AI BB Sell Signal (LSTM)",
+              message=json.stringify(dict.new(
+                  "signal", "SELL",
+                  "symbol", syminfo.tickerid,
+                  "price", str.tostring(close, "#.##"),
+                  "predicted_upper", str.tostring(predicted_bb_upper, "#.##"),
+                  "actual_upper", str.tostring(bb_upper, "#.##"),
+                  "momentum", str.tostring(histogram, "#.###"),
+                  "time", str.tostring(timenow)
+              )))
