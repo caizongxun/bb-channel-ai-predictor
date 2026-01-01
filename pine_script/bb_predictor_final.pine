@@ -1,0 +1,112 @@
+//@version=5
+indicator("AI BB Predictor + Entry Signals (LSTM)", shorttitle="AI BB + Entry (LSTM)", overlay=true)
+
+// ============================================================================
+// AI Bollinger Band 預測指標 - 完全修正版
+// 1. 藍色實线：實際 BB
+// 2. 綠色虚线：AI 預測 BB（從GitHub CSV）
+// 3. 三角型：進場訊號
+// ============================================================================
+
+//---------------------------
+// 參數設定
+//---------------------------
+bb_len = input.int(20, "BB Period", minval=5, maxval=100, group="BB Settings")
+bb_std = input.float(2.0, "BB Std Dev", minval=0.5, maxval=4.0, step=0.1, group="BB Settings")
+
+macd_f   = input.int(12, "MACD Fast",   group="Momentum")
+macd_s   = input.int(26, "MACD Slow",   group="Momentum")
+macd_sig = input.int(9,  "MACD Signal", group="Momentum")
+
+entry_tolerance   = input.float(2.0, "Entry Tolerance %", minval=0.1, maxval=5.0, step=0.1, group="Entry Settings")
+require_momentum  = input.bool(true, "Require Momentum Confirmation", group="Entry Settings")
+
+show_actual_bb      = input.bool(true, "Show Actual BB",          group="Display")
+show_ai_prediction  = input.bool(true, "Show AI Predictions",     group="Display")
+show_entry_signals  = input.bool(true, "Show Entry Signals",      group="Display")
+show_accuracy       = input.bool(true, "Show Prediction Accuracy",group="Display")
+ai_line_width       = input.int(2, "AI Line Width", minval=1, maxval=5, group="Display")
+
+//---------------------------
+// 實際 BB 計算
+//---------------------------
+[bb_mid, bb_up, bb_dn] = ta.bb(close, bb_len, bb_std)
+
+//---------------------------
+// 從GitHub 讀取 AI 預測 BB
+// 請修改這裡的 USERNAME 和 CSV 名稱
+//---------------------------
+pred_bb_up   = request.seed("caizongxun/bb-channel-ai-predictor", "BTCUSDT_15m_predictions", high)
+pred_bb_dn   = request.seed("caizongxun/bb-channel-ai-predictor", "BTCUSDT_15m_predictions", low)
+pred_bb_mid  = request.seed("caizongxun/bb-channel-ai-predictor", "BTCUSDT_15m_predictions", close)
+
+//---------------------------
+// MACD 動能
+//---------------------------
+[macd_line, macd_sig_line, macd_hist] = ta.macd(close, macd_f, macd_s, macd_sig)
+mom_bull = macd_hist > 0 and macd_hist > macd_hist[1]
+mom_bear = macd_hist < 0 and macd_hist < macd_hist[1]
+
+//---------------------------
+// 繫實際 BB（藍色）
+// 注意：plot() 必須在全域作用域，不能在 if 語句內
+//---------------------------
+plot(show_actual_bb ? bb_up  : na, "Actual BB Upper",  color=color.new(color.blue, 0),  linewidth=1)
+plot(show_actual_bb ? bb_dn  : na, "Actual BB Lower",  color=color.new(color.blue, 0),  linewidth=1)
+plot(show_actual_bb ? bb_mid : na, "Actual BB Middle", color=color.new(color.blue, 50), linewidth=1)
+
+//---------------------------
+// 繫 AI 預測BB（綠色虚线）
+// 注意：plot() 必須在全域作用域
+//---------------------------
+plot(show_ai_prediction ? pred_bb_up  : na, "Predicted BB Upper",  color=color.new(color.green, 0),  linewidth=ai_line_width, style=plot.style_dashed)
+plot(show_ai_prediction ? pred_bb_dn  : na, "Predicted BB Lower",  color=color.new(color.green, 0),  linewidth=ai_line_width, style=plot.style_dashed)
+plot(show_ai_prediction ? pred_bb_mid : na, "Predicted BB Middle", color=color.new(color.green, 50), linewidth=1,            style=plot.style_dashed)
+
+//---------------------------
+// 進場条件
+//---------------------------
+near_pred_dn  = close <= pred_bb_dn * (1 + entry_tolerance / 100)
+above_pred_dn = close >  pred_bb_dn
+
+long_sig_raw = near_pred_dn and above_pred_dn
+long_sig     = require_momentum ? (long_sig_raw and mom_bull) : long_sig_raw
+
+near_pred_up   = close >= pred_bb_up * (1 - entry_tolerance / 100)
+below_pred_up  = close <  pred_bb_up
+
+short_sig_raw = near_pred_up and below_pred_up
+short_sig     = require_momentum ? (short_sig_raw and mom_bear) : short_sig_raw
+
+//---------------------------
+// 繫進場訊號
+// 注意：plotshape() 必須在全域作用域
+// 使用 style= 參數 (不是 shape=)
+//---------------------------
+plotshape(show_entry_signals and long_sig, title="AI Buy", style=shape.triangleup, location=location.belowbar, color=color.new(color.green, 0), size=size.large)
+plotshape(show_entry_signals and short_sig, title="AI Sell", style=shape.triangledown, location=location.abovebar, color=color.new(color.red, 0), size=size.large)
+
+//---------------------------
+// 顯示預測精度
+//---------------------------
+var float accuracy = 0.0
+
+if show_accuracy and barstate.islast
+    if not na(pred_bb_up) and not na(pred_bb_dn) and not na(bb_up) and not na(bb_dn)
+        pred_range = pred_bb_up - pred_bb_dn
+        real_range = bb_up     - bb_dn
+        
+        if real_range != 0
+            accuracy := (1 - math.abs(pred_range - real_range) / math.abs(real_range)) * 100
+            accuracy := math.max(0, math.min(100, accuracy))
+            
+            lbl_txt = "Accuracy: " + str.tostring(accuracy, "0.0") + "%"
+            label.new(bar_index, high * 1.01, lbl_txt,
+                      yloc=yloc.abovebar, color=color.new(color.green, 60),
+                      textcolor=color.white, style=label.style_label_down)
+
+//---------------------------
+// 警報設定（選用）
+//---------------------------
+alertcondition(long_sig,  title="AI BB Buy (LSTM)",  message="AI_BB_BUY")
+alertcondition(short_sig, title="AI BB Sell (LSTM)", message="AI_BB_SELL")
