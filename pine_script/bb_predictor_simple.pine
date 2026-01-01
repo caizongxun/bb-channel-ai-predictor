@@ -1,0 +1,65 @@
+//@version=5
+indicator("AI BB Predictor (LSTM)", shorttitle="AI BB (LSTM)", overlay=true)
+
+// 參數
+bb_len = input.int(20, "BB Period", minval=5, maxval=100)
+bb_std = input.float(2.0, "BB Std Dev", minval=0.5, maxval=4.0)
+
+macd_f   = input.int(12, "MACD Fast")
+macd_s   = input.int(26, "MACD Slow")
+macd_sig = input.int(9,  "MACD Signal")
+
+entry_tolerance  = input.float(2.0, "Entry Tolerance %", minval=0.1, maxval=5.0)
+require_momentum = input.bool(true, "Require Momentum")
+
+show_actual = input.bool(true, "Show Actual BB")
+show_pred   = input.bool(true, "Show Predicted BB")
+show_signal = input.bool(true, "Show Signals")
+
+// 計算實際 BB
+[bb_mid, bb_up, bb_dn] = ta.bb(close, bb_len, bb_std)
+
+// 從 GitHub 讀取預測 BB
+pred_up  = request.seed("caizongxun/bb-channel-ai-predictor", "BTCUSDT_15m_predictions", high)
+pred_dn  = request.seed("caizongxun/bb-channel-ai-predictor", "BTCUSDT_15m_predictions", low)
+pred_mid = request.seed("caizongxun/bb-channel-ai-predictor", "BTCUSDT_15m_predictions", close)
+
+// MACD
+[macd_line, macd_sig_line, macd_hist] = ta.macd(close, macd_f, macd_s, macd_sig)
+mom_bull = macd_hist > 0 and macd_hist > macd_hist[1]
+mom_bear = macd_hist < 0 and macd_hist < macd_hist[1]
+
+// 畫實際 BB (藍色)
+if show_actual
+    p1 = plot(bb_up, "Actual Upper", color=color.blue, linewidth=1)
+    p2 = plot(bb_dn, "Actual Lower", color=color.blue, linewidth=1)
+    plot(bb_mid, "Actual Middle", color=color.new(color.blue, 50), linewidth=1)
+    fill(p1, p2, color=color.new(color.blue, 90))
+
+// 畫預測 BB (綠色虛線)
+if show_pred
+    plot(pred_up, "Predicted Upper", color=color.green, linewidth=2, style=plot.style_dashed)
+    plot(pred_dn, "Predicted Lower", color=color.green, linewidth=2, style=plot.style_dashed)
+    plot(pred_mid, "Predicted Middle", color=color.new(color.green, 50), linewidth=1, style=plot.style_dashed)
+
+// 進場條件
+near_pred_dn  = close <= pred_dn * (1 + entry_tolerance / 100)
+above_pred_dn = close > pred_dn
+long_sig = near_pred_dn and above_pred_dn
+if require_momentum
+    long_sig := long_sig and mom_bull
+
+near_pred_up  = close >= pred_up * (1 - entry_tolerance / 100)
+below_pred_up = close < pred_up
+short_sig = near_pred_up and below_pred_up
+if require_momentum
+    short_sig := short_sig and mom_bear
+
+// 畫訊號
+if show_signal
+    plotshape(long_sig, "Buy", shape.triangleup, location.belowbar, color.green, size.large)
+    plotshape(short_sig, "Sell", shape.triangledown, location.abovebar, color.red, size.large)
+
+// 警報
+alertcondition(long_sig, "BUY", "AI BB BUY")
+alertcondition(short_sig, "SELL", "AI BB SELL")
