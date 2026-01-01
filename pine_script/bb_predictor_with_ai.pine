@@ -1,0 +1,145 @@
+//@version=5
+indicator("AI BB Predictor + Entry Signals", shorttitle="AI BB + Entry", overlay=true)
+
+// ============================================================================
+// 澄清1: 使用基礎BB通道
+// BB計算: SMA(close, 20) ± 2 * StdDev(close, 20)
+// 模型預測: 未來K棒的BB上軌、下軌、中軌
+// ============================================================================
+
+// 基礎輸入參數
+bb_len = input.int(20, "BB Period", minval=5, maxval=100, group="BB Settings")
+bb_std = input.float(2.0, "BB Std Dev", minval=0.5, maxval=4.0, step=0.1, group="BB Settings")
+
+// MACD參數（動能確認）
+macd_f = input.int(12, "MACD Fast", group="Momentum")
+macd_s = input.int(26, "MACD Slow", group="Momentum")
+macd_sig = input.int(9, "MACD Signal", group="Momentum")
+
+// AI預測顯示開關
+show_ai_prediction = input.bool(true, "Show AI Predictions", group="AI Settings")
+ai_prediction_linewidth = input.int(2, "AI Line Width", minval=1, maxval=5, group="AI Settings")
+
+// ============================================================================
+// 計算實際BB通道
+// ============================================================================
+
+[bb_middle, bb_upper, bb_lower] = ta.bb(close, bb_len, bb_std)
+
+// ============================================================================
+// 從GitHub讀取AI預測的BB通道
+// ============================================================================
+// 澄清2: 使用request.seed()讀取預測數據
+
+predicted_bb_upper = request.seed("bb-channel-ai-predictor", "BTC_15m_predictions", high)
+predicted_bb_lower = request.seed("bb-channel-ai-predictor", "BTC_15m_predictions", low)
+predicted_bb_middle = request.seed("bb-channel-ai-predictor", "BTC_15m_predictions", close)
+
+// ============================================================================
+// 計算MACD（動能確認）
+// ============================================================================
+
+[macd, sig_line, histogram] = ta.macd(close, macd_f, macd_s, macd_sig)
+histogram_positive = histogram > 0
+histogram_negative = histogram < 0
+
+// ============================================================================
+// 可視化: 實際 vs 預測 BB
+// ============================================================================
+
+// 實際BB通道（藍色實線）
+plot(show_ai_prediction ? bb_upper : na, "Actual BB Upper", color=color.new(color.blue, 0), linewidth=1)
+plot(show_ai_prediction ? bb_lower : na, "Actual BB Lower", color=color.new(color.blue, 0), linewidth=1)
+plot(show_ai_prediction ? bb_middle : na, "Actual BB Middle", color=color.new(color.blue, 50), linewidth=1)
+
+// AI預測BB通道（綠色虛線）- 表示精確預測區域
+plot(show_ai_prediction ? predicted_bb_upper : na, "Predicted BB Upper", color=color.new(color.green, 0), 
+     linewidth=ai_prediction_linewidth, style=plot.style_dashed)
+plot(show_ai_prediction ? predicted_bb_lower : na, "Predicted BB Lower", color=color.new(color.green, 0), 
+     linewidth=ai_prediction_linewidth, style=plot.style_dashed)
+plot(show_ai_prediction ? predicted_bb_middle : na, "Predicted BB Middle", color=color.new(color.green, 50), 
+     linewidth=1, style=plot.style_dashed)
+
+// ============================================================================
+// 綠色標記: 價格在預測BB範圍內 + 動能確認
+// ============================================================================
+
+price_in_predicted_range = close >= predicted_bb_lower and close <= predicted_bb_upper
+momentum_confirmed = histogram_positive and histogram > histogram[1]
+
+// 當價格進入預測範圍 + 動能確認時，用綠色標記
+prediction_accuracy_signal = price_in_predicted_range and momentum_confirmed
+
+plotshape(prediction_accuracy_signal, "Prediction Accurate", shape.circle, 
+         location.abovebar, color=color.new(color.green, 0), size=size.small)
+
+// ============================================================================
+// 進場信號: 結合你的原邏輯 + AI預測
+// ============================================================================
+
+// BB觸碰檢測
+price_near_lower = close <= predicted_bb_lower * 1.02  // 2%容差
+price_near_upper = close >= predicted_bb_upper * 0.98
+
+// 做多信號: 價格觸碰預測下軌 + 動能上升
+long_signal = price_near_lower and histogram_positive and histogram > histogram[1]
+
+// 做空信號: 價格觸碰預測上軌 + 動能下降
+short_signal = price_near_upper and histogram_negative and histogram < histogram[1]
+
+plotshape(long_signal, "AI Buy", shape.triangleup, location.belowbar, 
+         color=color.new(color.green, 0), size=size.large)
+plotshape(short_signal, "AI Sell", shape.triangledown, location.abovebar, 
+         color=color.new(color.red, 0), size=size.large)
+
+// ============================================================================
+// 預測精度指標
+// ============================================================================
+
+var label accuracy_label = na
+
+if show_ai_prediction and barstate.islast
+    if not na(predicted_bb_upper) and not na(predicted_bb_lower)
+        predicted_range = predicted_bb_upper - predicted_bb_lower
+        actual_range = bb_upper - bb_lower
+        
+        if actual_range > 0
+            accuracy = (1 - math.abs(predicted_range - actual_range) / actual_range) * 100
+            accuracy_text = str.tostring(accuracy, "0.0") + "%"
+        else
+            accuracy_text = "N/A"
+        
+        if not na(accuracy_label)
+            label.delete(accuracy_label)
+        
+        accuracy_label := label.new(bar_index, high * 1.01, 
+                                   "精度: " + accuracy_text,
+                                   yloc=yloc.abovebar,
+                                   color=color.new(color.green, 50),
+                                   textcolor=color.white,
+                                   style=label.style_label_down,
+                                   text_size=size.small)
+
+// ============================================================================
+// 警報: 發送到Webhook
+// ============================================================================
+
+alertcondition(long_signal,
+              title="AI BB Buy Signal",
+              message=json.stringify(dict.new(
+                  "signal", "BUY",
+                  "price", str.tostring(close),
+                  "predicted_lower", str.tostring(predicted_bb_lower),
+                  "actual_lower", str.tostring(bb_lower),
+                  "momentum", str.tostring(histogram)
+              )))
+
+alertcondition(short_signal,
+              title="AI BB Sell Signal",
+              message=json.stringify(dict.new(
+                  "signal", "SELL",
+                  "price", str.tostring(close),
+                  "predicted_upper", str.tostring(predicted_bb_upper),
+                  "actual_upper", str.tostring(bb_upper),
+                  "momentum", str.tostring(histogram)
+              )))
