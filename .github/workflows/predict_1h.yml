@@ -1,0 +1,44 @@
+name: Predict 1h Timeframe
+
+on:
+  schedule:
+    - cron: '0 * * * *'  # 每小時執行一次
+  workflow_dispatch:
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+      
+      - name: Install dependencies
+        run: |
+          pip install -q pandas scikit-learn pyarrow requests huggingface-hub
+      
+      - name: Run predictions (1h)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+          TIMEFRAME: "1h"
+        run: |
+          python colab_scripts/generate_predictions.py
+      
+      - name: Commit and push
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add predictions/ 2>/dev/null || true
+          git commit -m "Auto-predict 1h - $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
+          git push
+      
+      - name: Upload to HuggingFace
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          echo "Uploading to HuggingFace..."
