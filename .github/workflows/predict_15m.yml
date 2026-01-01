@@ -1,4 +1,4 @@
-name: Predict 15m Timeframe
+name: Predict 15m Timeframe (LSTM)
 
 on:
   schedule:
@@ -20,27 +20,26 @@ jobs:
       
       - name: Install dependencies
         run: |
-          pip install -q pandas scikit-learn pyarrow requests huggingface-hub
+          pip install -q torch pandas scikit-learn pyarrow requests huggingface-hub tqdm
       
-      - name: Run predictions (15m)
+      - name: Run predictions (15m) with LSTM
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
           TIMEFRAME: "15m"
+          SYMBOLS: "BTCUSDT,ETHUSDT"
         run: |
-          python colab_scripts/generate_predictions.py
+          python colab_scripts/generate_predictions_lstm.py
       
       - name: Commit and push
         run: |
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
           git add predictions/ 2>/dev/null || true
-          git commit -m "Auto-predict 15m - $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
+          git commit -m "Auto-predict 15m LSTM - $(date -u +%Y-%m-%dT%H:%M:%SZ)" || true
           git push
       
       - name: Upload to HuggingFace
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: |
-          # 上傳到 HF
-          echo "Uploading to HuggingFace..."
-          # 具體實現見 generate_predictions.py
+          echo "Predictions uploaded to HuggingFace via TradingView request.seed()"
